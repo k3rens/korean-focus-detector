@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+numpy
+jinja2
+./wheels/praat_parselmouth-0.4.6-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+openai-whisper
+gunicorn

@@ -1,23 +1,49 @@
-import io
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from starlette.requests import Request
-
+import torch
 import whisper
-import numpy as np
 import parselmouth
-from emphasis import compute_emphasis_all_thresholds
+from fastapi import FastAPI, UploadFile
+import numpy as np
+import tempfile
+import os
+import gc
 
-model = whisper.load_model("base")
+app = FastAPI()
 
-print("Whisper model loaded.")
+# Load the smallest model
+model = whisper.load_model("tiny", device="cpu")
 
-app = FastAPI(title="Korean Focus Translator (Post-focal ratio)")
+@app.post("/process_audio/")
+async def process_audio(file: UploadFile):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
 
-templates = Jinja2Templates(directory="templates")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+    # Transcribe
+    result = model.transcribe(tmp_path)
+
+    # Extract word-level pitch
+    snd = parselmouth.Sound(tmp_path)
+    pitch = snd.to_pitch()
+    emphasized_words = []
+
+    for segment in result["segments"]:
+        for w in segment["words"]:
+            start, end = w["start"], w["end"]
+            f0_values = [
+                pitch.get_value_at_time(t)
+                for t in np.arange(start, end, 0.01)
+            ]
+            mean_f0 = np.nanmean(f0_values)
+            if mean_f0 > 200:  # example threshold
+                emphasized_words.append(f"*{w['word']}*")
+            else:
+                emphasized_words.append(w["word"])
+
+    os.remove(tmp_path)
+    del snd, pitch
+    gc.collect()
+
+    return {"emphasized_text": " ".join(emphasized_words)}
 
 
 @app.get("/", response_class=HTMLResponse)

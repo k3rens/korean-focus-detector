@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+  <meta charset="UTF-8" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Korean Focus Detector</title>
+
+  <link rel="stylesheet" href="/static/style.css" />
+
+</head>
+
+<body>
+
+  <div class="container">
+
+    <h1>Korean Focus Detector</h1>
+
+    <p class="subtitle">Record speech → detect emphasis across thresholds</p>
+
+
+
+    <div class="controls">
+
+      <button id="recordButton">🎙️ Start Recording</button>
+
+      <button id="stopButton" disabled>⏹️ Stop</button>
+
+    </div>
+
+
+
+    <div id="results" class="results"></div>
+
+  </div>
+
+
+
+  <script>
+
+    let mediaRecorder, audioChunks = [];
+
+
+
+    const recordButton = document.getElementById("recordButton");
+
+    const stopButton = document.getElementById("stopButton");
+
+    const resultsDiv = document.getElementById("results");
+
+
+
+    recordButton.addEventListener("click", async () => {
+
+      audioChunks = [];
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      mediaRecorder = new MediaRecorder(stream);
+
+
+
+      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+
+      mediaRecorder.onstop = async () => {
+
+        const blob = new Blob(audioChunks, { type: "audio/wav" });
+
+        const formData = new FormData();
+
+        formData.append("file", blob, "recording.wav");
+
+
+
+        resultsDiv.innerHTML = "<p class='loading'>Processing...</p>";
+
+
+
+        const response = await fetch("/translate", { method: "POST", body: formData });
+
+        const data = await response.json();
+
+
+
+        resultsDiv.innerHTML = "";
+
+        data.results.forEach((r, i) => {
+
+          const section = document.createElement("div");
+
+          section.classList.add("threshold");
+
+          section.innerHTML = `
+
+            <h3>Threshold ${i + 1}: ${r.threshold}</h3>
+
+            <p>${r.text}</p>
+
+          `;
+
+          resultsDiv.appendChild(section);
+
+        });
+
+      };
+
+
+
+      mediaRecorder.start();
+
+      recordButton.disabled = true;
+
+      stopButton.disabled = false;
+
+    });
+
+
+
+    stopButton.addEventListener("click", () => {
+
+      mediaRecorder.stop();
+
+      recordButton.disabled = false;
+
+      stopButton.disabled = true;
+
+    });
+
+  </script>
+
+</body>
+
+</html>

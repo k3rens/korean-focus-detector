@@ -1,0 +1,87 @@
+body {
+  font-family: "Helvetica Neue", sans-serif;
+  background-color: #353535;
+  color: #FFFFFC;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 800px;
+  margin: 2rem;
+  padding: 2rem;
+  background-color: #69A297;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+h1 {
+  text-align: center;
+  color: #FFFFFC;
+}
+
+.subtitle {
+  text-align: center;
+  color: #353535;
+  margin-bottom: 1.5rem;
+}
+
+.controls {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+button {
+  background-color: #CD533B;
+  border: none;
+  color: #FFFFFC;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background-color 0.3s ease;
+}
+
+button:hover {
+  background-color: #EE964B;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.results {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+.threshold {
+  background-color: #353535;
+  border-left: 6px solid #EE964B;
+  padding: 1rem;
+  border-radius: 8px;
+}
+
+.threshold h3 {
+  color: #EE964B;
+  margin-bottom: 0.5rem;
+}
+
+.threshold p {
+  color: #FFFFFC;
+  font-size: 1.1rem;
+}
+
+.loading {
+  text-align: center;
+  font-style: italic;
+  color: #FFFFFC;
+}

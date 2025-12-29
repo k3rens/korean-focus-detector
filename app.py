@@ -1,5 +1,3 @@
-# app.py - Audio -> Whisper Transcription (KO) & Whisper Translation (EN)
-
 import os
 import time
 import numpy as np
@@ -14,9 +12,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import whisper 
 
-# ------------------------
-# Global Thresholds (Based on ULTIMATE Stage)
-# ------------------------
+#Threshold Upper/Lower Bounds
 T_START = 73.35205304
 T_END = 54.10433993
 NUM_THRESHOLDS = 7
@@ -25,7 +21,7 @@ SEVEN_THRESHOLDS = [T_START - i * STEP for i in range(NUM_THRESHOLDS)]
 
 app = FastAPI()
 
-# Enhanced CORS setup to prevent "Failed to fetch" errors in browser environments
+#Prevent "Failed to fetch" errors in browser environments
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,8 +30,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load 'base' model for better accuracy. 
-# Note: 'base' is significantly more reliable for translation than 'tiny'
+
 print("Loading Whisper 'base' model...")
 model = whisper.load_model("base", device="cpu") 
 print("Model loaded.")
@@ -43,12 +38,11 @@ print("Model loaded.")
 async def analyze_and_compute(filename):
     temp_pcm_filename = filename.replace('.webm', '_pcm.wav') 
     try:
-        # Load audio using Whisper's robust utility
+        # Load audio using Whisper
         audio_data = whisper.load_audio(filename)
         sf.write(temp_pcm_filename, audio_data, samplerate=16000, subtype='PCM_16')
         
-        # 1. Whisper Transcription (Korean)
-        # word_timestamps=True is essential for mapping pitch to specific words
+        # 1. Whisper Transcription (Korean Speech --> Korean Text)
         result_ko = model.transcribe(
             temp_pcm_filename, 
             language="ko", 
@@ -57,8 +51,7 @@ async def analyze_and_compute(filename):
         )
         ko_text = result_ko.get("text", "").strip()
         
-        # 2. Whisper Translation (English)
-        # Using the built-in translation task with temperature 0 for stability
+        # 2. Whisper Translation (Korean Text --> English Text)
         result_en = model.transcribe(
             temp_pcm_filename, 
             task="translate", 
@@ -67,7 +60,7 @@ async def analyze_and_compute(filename):
         )
         base_english = result_en.get("text", "").strip()
 
-        # 3. Acoustic Pitch Extraction
+        # 3. Pitch Extraction
         snd = parselmouth.Sound(temp_pcm_filename)
         pitch = snd.to_pitch()
         
@@ -89,7 +82,7 @@ async def analyze_and_compute(filename):
             filtered = [v for v in vals if v and v > 0] 
             pitch_values.append(float(np.mean(filtered)) if filtered else 0.0)
 
-        # 4. Compute Emphasis across thresholds
+        # 4. Compute ratio/Find focus word(s) across thresholds
         results = []
         for t in SEVEN_THRESHOLDS:
             ratios = []
@@ -136,7 +129,7 @@ async def analyze_and_compute(filename):
     except Exception as e:
         return {"error": str(e)}
     finally:
-        # Cleanup temporary files
+        # Clean up! Yippee! Everybody everywhere!
         if os.path.exists(temp_pcm_filename):
             try:
                 os.remove(temp_pcm_filename)
@@ -150,7 +143,6 @@ async def handle_request(file: UploadFile = File(...)):
         content = await file.read()
         with open(temp_filename, "wb") as f:
             f.write(content)
-        # Using await for the processing task
         data = await analyze_and_compute(temp_filename)
         return JSONResponse(data)
     finally:
@@ -166,5 +158,5 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    # explicitly binding to 127.0.0.1 for local dev
+    # explicitly binding to 127.0.0.1 for local dev (aka for me)
     uvicorn.run(app, host="127.0.0.1", port=8000)

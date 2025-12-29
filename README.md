@@ -2,7 +2,8 @@
 
 This project is a phonetic analysis tool designed to detect prosodic focus in spoken Korean sentences. It uses real-time acoustic analysis to identify the "focus word" based on the principle of Post-Focal Compression (PFC).
 
-(View demo at https://k3rens-koreanfocusdetectordemo.static.hf.space/index.html)
+(View demo at https://k3rens-koreanfocusdetectordemo.static.hf.space/index.html
+Note: the demo UI is significantly different from the HTML/CSS files in this repository, as this project aims to demonstrate the full seven thresholds, while the demo only highlights the most accurate one.)
 
 A. How to Run Locally
 

@@ -1,100 +1,170 @@
-import io
-import gc
+# app.py - Audio -> Whisper Transcription (KO) & Whisper Translation (EN)
+
 import os
-import tempfile
+import time
 import numpy as np
-import torch
-import whisper
+import soundfile as sf
 import parselmouth
-from fastapi import FastAPI, UploadFile, File, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from emphasis import compute_emphasis_all_thresholds
+import sys
+import re
+import asyncio
+
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+import whisper 
+
+# ------------------------
+# Global Thresholds (Based on ULTIMATE Stage)
+# ------------------------
+T_START = 73.35205304
+T_END = 54.10433993
+NUM_THRESHOLDS = 7
+STEP = (T_START - T_END) / (NUM_THRESHOLDS - 1)
+SEVEN_THRESHOLDS = [T_START - i * STEP for i in range(NUM_THRESHOLDS)]
 
 app = FastAPI()
 
-# Set up templates and static files
-templates = Jinja2Templates(directory="templates")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Enhanced CORS setup to prevent "Failed to fetch" errors in browser environments
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Load the smallest model (defer this if memory is a problem)
-model = whisper.load_model("tiny", device="cpu")
+# Load 'base' model for better accuracy. 
+# Note: 'base' is significantly more reliable for translation than 'tiny'
+print("Loading Whisper 'base' model...")
+model = whisper.load_model("base", device="cpu") 
+print("Model loaded.")
 
+async def analyze_and_compute(filename):
+    temp_pcm_filename = filename.replace('.webm', '_pcm.wav') 
+    try:
+        # Load audio using Whisper's robust utility
+        audio_data = whisper.load_audio(filename)
+        sf.write(temp_pcm_filename, audio_data, samplerate=16000, subtype='PCM_16')
+        
+        # 1. Whisper Transcription (Korean)
+        # word_timestamps=True is essential for mapping pitch to specific words
+        result_ko = model.transcribe(
+            temp_pcm_filename, 
+            language="ko", 
+            word_timestamps=True, 
+            fp16=False
+        )
+        ko_text = result_ko.get("text", "").strip()
+        
+        # 2. Whisper Translation (English)
+        # Using the built-in translation task with temperature 0 for stability
+        result_en = model.transcribe(
+            temp_pcm_filename, 
+            task="translate", 
+            fp16=False,
+            temperature=0.0
+        )
+        base_english = result_en.get("text", "").strip()
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    # Serves index.html when you go to the root URL
-    return templates.TemplateResponse("index.html", {"request": request})
+        # 3. Acoustic Pitch Extraction
+        snd = parselmouth.Sound(temp_pcm_filename)
+        pitch = snd.to_pitch()
+        
+        words, word_stamps = [], []
+        for seg in result_ko.get("segments", []):
+            if seg.get("words"):
+                for w in seg["words"]:
+                    if w.get("word", "").strip():
+                        words.append(w["word"].strip())
+                        word_stamps.append((float(w["start"]), float(w["end"])))
 
+        if not words:
+            return {"error": "No speech detected. Please speak clearly into the microphone."}
 
-@app.post("/process_audio/")
-async def process_audio(file: UploadFile):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        tmp.write(await file.read())
-        tmp_path = tmp.name
+        pitch_values = []
+        for (start, end) in word_stamps:
+            times = np.arange(start, end, 0.01)
+            vals = [pitch.get_value_at_time(t) for t in times]
+            filtered = [v for v in vals if v and v > 0] 
+            pitch_values.append(float(np.mean(filtered)) if filtered else 0.0)
 
-    # Transcribe
-    result = model.transcribe(tmp_path)
+        # 4. Compute Emphasis across thresholds
+        results = []
+        for t in SEVEN_THRESHOLDS:
+            ratios = []
+            candidates = []
+            for i in range(len(pitch_values) - 1):
+                p_curr, p_next = pitch_values[i], pitch_values[i+1]
+                ratio = (p_next / p_curr) * 100.0 if p_curr > 0 and p_next > 0 else 100.0
+                ratios.append(ratio)
+                if ratio < t:
+                    candidates.append(i)
+            
+            emphasized_ko_list = words.copy()
+            focus_word_ko = ""
+            if candidates:
+                idx = min(candidates, key=lambda i: ratios[i])
+                focus_word_ko = words[idx]
+                emphasized_ko_list[idx] = f"*{words[idx]}*"
+            
+            en_display = base_english
+            if focus_word_ko:
+                en_display = f"<i>{base_english}</i> (Focus: {focus_word_ko})"
 
-    # Extract word-level pitch
-    snd = parselmouth.Sound(tmp_path)
-    pitch = snd.to_pitch()
-    emphasized_words = []
+            processed_table = []
+            for i, w in enumerate(words):
+                is_focus = (candidates and i == min(candidates, key=lambda k: ratios[k]))
+                processed_table.append({
+                    "word": w, 
+                    "pitch": round(pitch_values[i], 2), 
+                    "emphasis": "Focus" if is_focus else "Neutral"
+                })
 
-    for segment in result["segments"]:
-        for w in segment["words"]:
-            start, end = w["start"], w["end"]
-            f0_values = [
-                pitch.get_value_at_time(t)
-                for t in np.arange(start, end, 0.01)
-            ]
-            mean_f0 = np.nanmean(f0_values)
-            if mean_f0 > 200:  # example threshold
-                emphasized_words.append(f"*{w['word']}*")
-            else:
-                emphasized_words.append(w["word"])
+            results.append({
+                "threshold": round(t, 2),
+                "ko_text": " ".join(emphasized_ko_list),
+                "en_text": en_display,
+                "table_data": processed_table
+            })
 
-    os.remove(tmp_path)
-    del snd, pitch
-    gc.collect()
+        return {
+            "all_results": results,
+            "base_english": base_english
+        }
 
-    return {"emphasized_text": " ".join(emphasized_words)}
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        # Cleanup temporary files
+        if os.path.exists(temp_pcm_filename):
+            try:
+                os.remove(temp_pcm_filename)
+            except:
+                pass
 
+@app.post("/translate/")
+async def handle_request(file: UploadFile = File(...)):
+    temp_filename = f"upload_{time.time()}.webm" 
+    try:
+        content = await file.read()
+        with open(temp_filename, "wb") as f:
+            f.write(content)
+        # Using await for the processing task
+        data = await analyze_and_compute(temp_filename)
+        return JSONResponse(data)
+    finally:
+        if os.path.exists(temp_filename):
+            try:
+                os.remove(temp_filename)
+            except:
+                pass
 
-@app.post("/translate")
-async def translate(file: UploadFile = File(...)):
-    audio_bytes = await file.read()
+@app.get("/")
+async def root():
+    return HTMLResponse("Server is active. Listening on port 8000.")
 
-    # 1. Load audio into Whisper
-    audio_buffer = io.BytesIO(audio_bytes)
-    result = model.transcribe(audio_buffer, task="translate")
-
-    words = [seg["text"].strip() for seg in result["segments"]]
-
-    # 2. Extract Praat pitch values per word
-    snd = parselmouth.Sound(io.BytesIO(audio_bytes))
-    pitch_obj = snd.to_pitch()
-    pitch_values = []
-
-    total_frames = pitch_obj.get_number_of_frames()
-    frames_per_word = max(total_frames // len(words), 1)
-
-    for i in range(len(words)):
-        start_frame = i * frames_per_word
-        end_frame = min((i + 1) * frames_per_word, total_frames)
-        frame_pitches = [
-            pitch_obj.get_value_at_time(pitch_obj.get_time_from_frame_number(f))
-            for f in range(start_frame, end_frame)
-        ]
-        mean_pitch = np.mean([p for p in frame_pitches if p and p > 0] or [0])
-        pitch_values.append(mean_pitch)
-
-    # 3. Compute all thresholds emphasis
-    thresholds = [
-        73.35205304, 70.144100855, 66.93614867, 63.728196485,
-        60.5202443, 57.312292115, 54.10433993
-    ]
-    results = compute_emphasis_all_thresholds(words, pitch_values, thresholds)
-
-    return {"results": results}
+if __name__ == "__main__":
+    import uvicorn
+    # explicitly binding to 127.0.0.1 for local dev
+    uvicorn.run(app, host="127.0.0.1", port=8000)
